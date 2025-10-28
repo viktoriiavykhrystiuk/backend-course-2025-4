@@ -27,7 +27,7 @@ program.configureOutput({
       console.error(msg);
     }
 
-    process.exit(1); // Завершуємо програму після помилки
+    process.exit(1); // Завершуємо програму після помилк
   },
 });
 
