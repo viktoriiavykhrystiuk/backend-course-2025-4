@@ -2,80 +2,73 @@
 import { Command } from "commander";
 import http from "http";
 import { promises as fs } from "fs";
-import { XMLBuilder } from "fast-xml-parser";
+import path from "path";
 
+// --- Налаштування Commander ---
 const program = new Command();
 
 program
-  .requiredOption("-i, --input <path>", "шлях до файлу JSON")
+  .requiredOption("-i, --input <path>", "шлях до JSON файлу")
   .requiredOption("-h, --host <host>", "адреса сервера")
   .requiredOption("-p, --port <port>", "порт сервера");
 
+// --- Кастомний обробник помилок ---
+program.configureOutput({
+  writeErr: (str) => {
+    const msg = str.trim();
+
+    if (msg.includes("required option '-i, --input <path>'")) {
+      console.error("❌ Please, specify input file (-i або --input)");
+    } else if (msg.includes("required option '-h, --host <host>'")) {
+      console.error("❌ Please, specify host (-h або --host)");
+    } else if (msg.includes("required option '-p, --port <port>'")) {
+      console.error("❌ Please, specify port (-p або --port)");
+    } else {
+      console.error(msg);
+    }
+
+    process.exit(1); // Завершуємо програму після помилки
+  },
+});
+
 program.parse(process.argv);
-
 const options = program.opts();
-const { input, host, port } = options;
 
-async function readJsonFile(path) {
+// --- Перевірка наявності файлу ---
+try {
+  await fs.access(options.input);
+} catch {
+  console.error("❌ Cannot find input file");
+  process.exit(1);
+}
+
+// --- Зчитування JSON-файлу ---
+async function readJsonFile(filePath) {
   try {
-    const data = await fs.readFile(path, "utf-8");
+    const data = await fs.readFile(filePath, "utf-8");
     return JSON.parse(data);
   } catch (err) {
-    if (err.code === "ENOENT") {
-      console.error("Cannot find input file");
-      process.exit(1);
-    } else {
-      console.error("Error reading file:", err);
-      process.exit(1);
-    }
+    console.error("❌ Error reading or parsing JSON:", err.message);
+    process.exit(1);
   }
 }
 
+// --- Створення HTTP-сервера ---
 const server = http.createServer(async (req, res) => {
   try {
-    const url = new URL(req.url, `http://${req.headers.host}`);
-    const params = url.searchParams;
+    const data = await readJsonFile(options.input);
 
-    const data = await readJsonFile(input);
-
-    let filtered = data;
-
-    // Фільтрація за max_mpg (тільки записи з mpg < X)
-    if (params.has("max_mpg")) {
-      const maxMpg = parseFloat(params.get("max_mpg"));
-      if (!isNaN(maxMpg)) {
-        filtered = filtered.filter(car => car.mpg < maxMpg);
-      }
-    }
-
-    // Формування даних для XML
-    const cylinders = params.get("cylinders") === "true";
-
-    const carsXmlData = filtered.map(car => {
-      const item = { model: car.model, mpg: car.mpg };
-      if (cylinders) item.cyl = car.cyl;
-      return item;
-    });
-
-    const builder = new XMLBuilder({
-      ignoreAttributes: false,
-      format: true,
-      suppressEmptyNode: true,
-    });
-
-    const xmlData = builder.build({
-      cars: { car: carsXmlData },
-    });
-
-    res.writeHead(200, { "Content-Type": "application/xml" });
-    res.end(xmlData);
+    res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
+    res.end(JSON.stringify(data, null, 2));
   } catch (err) {
-    res.writeHead(500, { "Content-Type": "text/plain" });
+    console.error("❌ Internal Server Error:", err.message);
+    res.writeHead(500, { "Content-Type": "text/plain; charset=utf-8" });
     res.end("Internal Server Error");
-    console.error(err);
   }
 });
 
-server.listen(port, host, () => {
-  console.log(`Server running at http://${host}:${port}/`);
+// --- Запуск сервера ---
+server.listen(options.port, options.host, () => {
+  console.log(`✅ Server running at http://${options.host}:${options.port}/`);
+  console.log(`📂 Reading data from: ${options.input}`);
 });
